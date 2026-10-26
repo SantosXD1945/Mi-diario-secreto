@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,10 +23,32 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Compilar APK de depuración
+      - name: Preparar la llave de firma (si existe)
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/diario.jks"
+            echo "KEYSTORE_PATH=$RUNNER_TEMP/diario.jks" >> "$GITHUB_ENV"
+          else
+            echo "No hay llave de firma: se usará la firma de depuración."
+          fi
+
+      - name: Compilar APK
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
           name: diario-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publicar versión (solo si está firmada con tu llave)
+        if: ${{ env.KEYSTORE_PATH != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Versión ${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk

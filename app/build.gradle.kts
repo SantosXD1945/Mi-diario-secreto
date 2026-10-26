@@ -5,6 +5,13 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// GitHub Actions pasa el número de compilación; en local vale 1.
+val buildNumber: Int = (System.getenv("BUILD_NUMBER") ?: "1").toIntOrNull() ?: 1
+
+// Si hay una llave de firma (secretos de GitHub), todas las versiones se firman igual
+// y por eso se pueden instalar como actualización una encima de otra.
+val keystorePath: String? = System.getenv("KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "com.santosxd.diario"
     compileSdk = 34
@@ -13,12 +20,28 @@ android {
         applicationId = "com.santosxd.diario"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = buildNumber
+        versionName = "0.$buildNumber"
+    }
+
+    signingConfigs {
+        if (keystorePath != null) {
+            create("diario") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("KEY_PASSWORD")
+                keyAlias = "diario"
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
-        release {
+        getByName("debug") {
+            if (keystorePath != null) {
+                signingConfig = signingConfigs.getByName("diario")
+            }
+        }
+        getByName("release") {
             isMinifyEnabled = false
         }
     }
@@ -34,6 +57,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -50,6 +74,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.biometric:biometric:1.1.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")

@@ -23,6 +23,26 @@ class Prefs(context: Context) {
         get() = sp.getString("backup_tree", null)
         set(value) = sp.edit().putString("backup_tree", value).apply()
 
+    var updateChecks: Boolean
+        get() = sp.getBoolean("update_checks", true)
+        set(value) = sp.edit().putBoolean("update_checks", value).apply()
+
+    var lastNotifiedUpdate: Int
+        get() = sp.getInt("last_notified_update", 0)
+        set(value) = sp.edit().putInt("last_notified_update", value).apply()
+
+    var reminderEnabled: Boolean
+        get() = sp.getBoolean("reminder_on", false)
+        set(value) = sp.edit().putBoolean("reminder_on", value).apply()
+
+    var reminderHour: Int
+        get() = sp.getInt("reminder_hour", 21)
+        set(value) = sp.edit().putInt("reminder_hour", value).apply()
+
+    var reminderMinute: Int
+        get() = sp.getInt("reminder_minute", 0)
+        set(value) = sp.edit().putInt("reminder_minute", value).apply()
+
     val pinLength: Int
         get() = sp.getInt("pin_len", 4)
 

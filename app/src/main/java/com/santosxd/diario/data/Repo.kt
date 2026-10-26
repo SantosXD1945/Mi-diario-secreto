@@ -22,11 +22,16 @@ class Repo(private val db: DiaryDb) {
         if (clean.isNotEmpty()) dao.insertActivity(ActivityEntity(name = clean))
     }
 
-    suspend fun saveEntry(mood: Int, note: String, activityIds: Set<Long>) {
+    suspend fun saveEntry(
+        mood: Int,
+        note: String,
+        activityIds: Set<Long>,
+        createdAt: Long = System.currentTimeMillis()
+    ) {
         db.withTransaction {
             val id = dao.insertEntry(
                 EntryEntity(
-                    createdAt = System.currentTimeMillis(),
+                    createdAt = createdAt,
                     mood = mood,
                     note = note.trim()
                 )
@@ -35,7 +40,54 @@ class Repo(private val db: DiaryDb) {
         }
     }
 
+    suspend fun updateEntry(
+        id: Long,
+        mood: Int,
+        note: String,
+        activityIds: Set<Long>,
+        createdAt: Long
+    ) {
+        db.withTransaction {
+            dao.updateEntry(
+                EntryEntity(id = id, createdAt = createdAt, mood = mood, note = note.trim())
+            )
+            dao.clearRefs(id)
+            dao.insertRefs(activityIds.map { EntryActivityRef(id, it) })
+        }
+    }
+
     suspend fun delete(id: Long) = dao.deleteEntry(id)
+
+    /** Devuelve false si ya existe otra actividad con ese nombre. */
+    suspend fun renameActivity(id: Long, name: String): Boolean {
+        val clean = name.trim()
+        if (clean.isEmpty()) return false
+        return try {
+            dao.renameActivity(id, clean)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun deleteActivity(id: Long) = dao.deleteActivity(id)
+
+    /** CSV para abrir en una hoja de cálculo. Fecha, ánimo (1 a 5), actividades, nota. */
+    suspend fun exportCsv(): String {
+        val acts = dao.allActivities().associate { it.id to it.name }
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+        val sb = StringBuilder("fecha,animo,actividades,nota\n")
+        for (e in dao.allEntries()) {
+            val names = e.activities.mapNotNull { acts[it.id] }.joinToString("; ")
+            sb.append(csv(fmt.format(java.util.Date(e.entry.createdAt)))).append(',')
+                .append(e.entry.mood + 1).append(',')
+                .append(csv(names)).append(',')
+                .append(csv(e.entry.note)).append('\n')
+        }
+        return sb.toString()
+    }
+
+    private fun csv(s: String): String = "\"" + s.replace("\"", "\"\"") + "\""
 
     suspend fun exportJson(): String {
         val acts = dao.allActivities()

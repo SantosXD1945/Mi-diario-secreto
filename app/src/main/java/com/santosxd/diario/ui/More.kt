@@ -1,37 +1,20 @@
 package com.santosxd.diario.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -39,11 +22,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import com.santosxd.diario.BuildConfig
 import com.santosxd.diario.MainActivity
+import com.santosxd.diario.data.ActivityEntity
 import com.santosxd.diario.data.Repo
+import com.santosxd.diario.reminder.Reminder
 import com.santosxd.diario.security.Crypto
 import com.santosxd.diario.security.Prefs
+import com.santosxd.diario.update.Updater
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -61,14 +49,32 @@ fun MoreScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    val activities by repo.activities.collectAsState(initial = emptyList())
     var hasPin by remember { mutableStateOf(prefs.hasPin()) }
     var bio by remember { mutableStateOf(prefs.biometric) }
     var tree by remember { mutableStateOf(prefs.backupTree) }
     var dlg by remember { mutableStateOf<String?>(null) }
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
     var restoreJson by remember { mutableStateOf<String?>(null) }
+    var reminder by remember { mutableStateOf(prefs.reminderEnabled) }
+    var rHour by remember { mutableIntStateOf(prefs.reminderHour) }
+    var rMinute by remember { mutableIntStateOf(prefs.reminderMinute) }
+    var updates by remember { mutableStateOf(prefs.updateChecks) }
+    var found by remember { mutableStateOf<Updater.Release?>(null) }
+    var renaming by remember { mutableStateOf<ActivityEntity?>(null) }
+    var deleting by remember { mutableStateOf<ActivityEntity?>(null) }
 
     fun toast(text: String) = Toast.makeText(ctx, text, Toast.LENGTH_LONG).show()
+
+    fun enableReminder() {
+        prefs.reminderEnabled = true
+        reminder = true
+        Reminder.schedule(ctx, prefs.reminderHour, prefs.reminderMinute)
+    }
+
+    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) enableReminder() else toast("Sin permiso de notificaciones no puedo avisarte")
+    }
 
     val pickTree = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
@@ -84,6 +90,24 @@ fun MoreScreen(
         if (uri != null) {
             restoreUri = uri
             dlg = "restorepass"
+        }
+    }
+    val createCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    try {
+                        val text = repo.exportCsv()
+                        ctx.contentResolver.openOutputStream(uri)?.use {
+                            it.write(text.toByteArray(Charsets.UTF_8))
+                        }
+                        true
+                    } catch (e: Exception) {
+                        false
+                    }
+                }
+                toast(if (ok) "Archivo CSV guardado" else "No se pudo guardar el CSV")
+            }
         }
     }
 
@@ -104,6 +128,47 @@ fun MoreScreen(
                 )
             }
         }
+
+        Text("Actividades", style = MaterialTheme.typography.titleMedium)
+        OutlinedButton(onClick = { dlg = "activities" }) { Text("Renombrar o borrar actividades") }
+
+        Text("Recordatorio diario", style = MaterialTheme.typography.titleMedium)
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Avisarme cada día")
+            Switch(checked = reminder, onCheckedChange = { on ->
+                if (!on) {
+                    prefs.reminderEnabled = false
+                    reminder = false
+                    Reminder.cancel(ctx)
+                } else if (Build.VERSION.SDK_INT >= 33 &&
+                    ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    activity.suppressLock = true
+                    askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    enableReminder()
+                }
+            })
+        }
+        OutlinedButton(onClick = {
+            val c = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, rHour)
+                set(Calendar.MINUTE, rMinute)
+            }
+            pickTime(ctx, c.timeInMillis) { ms ->
+                val n = Calendar.getInstance().apply { timeInMillis = ms }
+                rHour = n.get(Calendar.HOUR_OF_DAY)
+                rMinute = n.get(Calendar.MINUTE)
+                prefs.reminderHour = rHour
+                prefs.reminderMinute = rMinute
+                if (prefs.reminderEnabled) Reminder.schedule(ctx, rHour, rMinute)
+            }
+        }) { Text("Hora: %02d:%02d".format(rHour, rMinute)) }
 
         Text("Seguridad", style = MaterialTheme.typography.titleMedium)
         if (!hasPin) {
@@ -156,7 +221,57 @@ fun MoreScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        Text("Exportar", style = MaterialTheme.typography.titleMedium)
+        OutlinedButton(onClick = {
+            activity.suppressLock = true
+            createCsv.launch("diario.csv")
+        }) { Text("Exportar a CSV") }
+        Text(
+            "El archivo CSV NO va cifrado: cualquiera que lo tenga podrá leer tu diario.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Text("Actualizaciones", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Versión instalada: ${BuildConfig.VERSION_NAME}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Avisarme de versiones nuevas")
+            Switch(checked = updates, onCheckedChange = {
+                prefs.updateChecks = it
+                updates = it
+                Updater.schedule(ctx, it)
+            })
+        }
+        OutlinedButton(onClick = {
+            scope.launch {
+                val r = withContext(Dispatchers.IO) { Updater.fetchLatest() }
+                if (r == null) {
+                    toast("No se pudo comprobar. Revisa tu conexión.")
+                } else if (Updater.isNewer(r)) {
+                    found = r
+                } else {
+                    toast("Ya tienes la última versión")
+                }
+            }
+        }) { Text("Buscar ahora") }
+        Text(
+            "Solo consulta la página de versiones del proyecto en GitHub. " +
+                "No envía nada de tu diario.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
+
+    val release = found
+    if (release != null) UpdateDialog(release) { found = null }
 
     when (dlg) {
         "setpin" -> SetPinDialog(onDismiss = { dlg = null }) { pin ->
@@ -173,6 +288,30 @@ fun MoreScreen(
             dlg = null
             toast("PIN quitado")
         }
+
+        "activities" -> AlertDialog(
+            onDismissRequest = { dlg = null },
+            title = { Text("Actividades") },
+            text = {
+                Column(
+                    Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    activities.forEach { a ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(a.name, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { renaming = a }) { Text("Renombrar") }
+                            TextButton(onClick = { deleting = a }) { Text("Borrar") }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { dlg = null }) { Text("Cerrar") } }
+        )
 
         "backup" -> PassDialog("Contraseña para cifrar la copia", confirm = true, onDismiss = { dlg = null }) { pass ->
             dlg = null
@@ -237,6 +376,52 @@ fun MoreScreen(
                 }) { Text("Reemplazar") }
             },
             dismissButton = { TextButton(onClick = { dlg = null }) { Text("Cancelar") } }
+        )
+    }
+
+    val toRename = renaming
+    if (toRename != null) {
+        var name by remember(toRename.id) { mutableStateOf(toRename.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Renombrar actividad") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Nombre") }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val ok = repo.renameActivity(toRename.id, name)
+                            if (!ok) toast("Ya existe una actividad con ese nombre")
+                        }
+                        renaming = null
+                    },
+                    enabled = name.isNotBlank()
+                ) { Text("Guardar") }
+            },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancelar") } }
+        )
+    }
+
+    val toDelete = deleting
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("¿Borrar \"${toDelete.name}\"?") },
+            text = { Text("Se quitará de todas tus entradas. No se puede deshacer.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { repo.deleteActivity(toDelete.id) }
+                    deleting = null
+                }) { Text("Borrar") }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancelar") } }
         )
     }
 }

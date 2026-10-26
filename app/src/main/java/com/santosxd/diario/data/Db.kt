@@ -16,6 +16,7 @@ import androidx.room.Relation
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "entry")
@@ -100,6 +101,18 @@ interface DiaryDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertRefs(refs: List<EntryActivityRef>)
+
+    @Update
+    suspend fun updateEntry(entry: EntryEntity)
+
+    @Query("DELETE FROM entry_activity WHERE entryId = :entryId")
+    suspend fun clearRefs(entryId: Long)
+
+    @Query("UPDATE activity SET name = :name WHERE id = :id")
+    suspend fun renameActivity(id: Long, name: String)
+
+    @Query("DELETE FROM activity WHERE id = :id")
+    suspend fun deleteActivity(id: Long)
 
     @Query("DELETE FROM entry WHERE id = :id")
     suspend fun deleteEntry(id: Long)
